@@ -14,7 +14,7 @@ Python port of the C# ``Program.cs`` + ``A365AgentApplication``. Wires up:
   C# ``builder.AddAgent<A365AgentApplication>``), with all four agentic
   notification handlers (Email, Word, Excel, PowerPoint) routed through the
   agent's ``handle_agent_notification_activity``.
-* The HTTP server endpoints ``/api/messages``, ``/``, ``/liveness``, and
+* The HTTP server endpoints ``/activity/messages``, ``/``, ``/liveness``, and
   ``/readiness`` to match the original C# minimal-API routes.
 """
 
@@ -23,13 +23,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import socket
 from os import environ
 from typing import Optional
 
 from aiohttp.web import Application, Request, Response, json_response, run_app
 from aiohttp.web_middlewares import middleware as web_middleware
-from microsoft_agents.activity import Activity, load_configuration_from_env
+from microsoft_agents.activity import (
+    Activity,
+    ClientCitation,
+    ClientCitationAppearance,
+    load_configuration_from_env,
+)
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import (
     jwt_authorization_middleware,
@@ -52,6 +58,7 @@ from microsoft_agents_a365.notifications.agent_notification import (
     ChannelId,
 )
 from opentelemetry import propagate, trace
+from opentelemetry.sdk.trace import SpanProcessor
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from .agent_interface import AgentInterface, check_agent_inheritance
@@ -64,6 +71,28 @@ from .request_correlation import (
     AgentRequestCorrelationMiddleware,
     CorrelatingCloudAdapter,
 )
+
+_CITATION_REFERENCE_PATTERN = re.compile(
+    r'^\[(\d+)\]:\s+(https?://\S+?)(?:\s+"([^"]*)")?\s*$',
+    re.MULTILINE,
+)
+
+
+def _create_message_activity(text: str) -> Activity:
+    activity = Activity(type="message", text=text, text_format="markdown")
+    citations = [
+        ClientCitation(
+            position=int(match.group(1)),
+            appearance=ClientCitationAppearance(
+                name=(match.group(3) or match.group(2))[:80],
+                url=match.group(2),
+            ),
+        )
+        for match in _CITATION_REFERENCE_PATTERN.finditer(text)
+    ]
+    if citations:
+        activity.add_ai_metadata(citations=citations)
+    return activity
 
 
 def is_wpx_comment_notification(notification_activity: AgentNotificationActivity) -> bool:
@@ -107,6 +136,17 @@ logger.info("📝 Logging configured at level %s (from LOG_LEVEL env)", _LOG_LEV
 # ---------------------------------------------------------------------------
 
 
+class _FoundryProjectIdSpanProcessor(SpanProcessor):
+    def __init__(self, project_resource_id: str) -> None:
+        self._project_resource_id = project_resource_id
+
+    def on_start(self, span, parent_context=None) -> None:
+        span.set_attribute(
+            "microsoft.foundry.project.id",
+            self._project_resource_id,
+        )
+
+
 def _configure_key_vault() -> None:
     key_vault_name = os.getenv("KeyVaultName") or os.getenv("KEY_VAULT_NAME")
     if not key_vault_name:
@@ -142,12 +182,33 @@ def _configure_application_insights() -> None:
         return
 
     try:
+        from azure.ai.projects.telemetry import AIProjectInstrumentor
         from azure.monitor.opentelemetry import configure_azure_monitor
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
-        configure_azure_monitor(connection_string=conn, sampling_ratio=1.0)
+        os.environ.setdefault("AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING", "true")
+        os.environ.setdefault(
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true"
+        )
+        project_resource_id = os.getenv("FOUNDRY_PROJECT_ARM_ID")
+        if not project_resource_id:
+            logger.warning(
+                "FOUNDRY_PROJECT_ARM_ID is not set; spans will not include "
+                "microsoft.foundry.project.id."
+            )
+        span_processors = (
+            [_FoundryProjectIdSpanProcessor(project_resource_id)]
+            if project_resource_id
+            else []
+        )
+        configure_azure_monitor(
+            connection_string=conn,
+            sampling_ratio=1.0,
+            span_processors=span_processors,
+        )
+        AIProjectInstrumentor().instrument()
         HTTPXClientInstrumentor().instrument()
-        logger.info("Application Insights telemetry configured.")
+        logger.info("Application Insights and Foundry GenAI telemetry configured.")
     except Exception:
         logger.exception("Failed to configure Application Insights telemetry.")
 
@@ -368,7 +429,7 @@ class GenericAgentHost:
                         self.auth_handler_name,
                         context,
                     )
-                    await context.send_activity(response)
+                    await context.send_activity(_create_message_activity(response))
                 finally:
                     typing_task.cancel()
                     try:
@@ -479,10 +540,7 @@ class GenericAgentHost:
                 scopes=["5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default"],
             )
 
-        if environ.get("BEARER_TOKEN"):
-            logger.info("🔑 Anonymous dev mode")
-        else:
-            logger.warning("⚠️ No auth env vars; running anonymous")
+        logger.warning("⚠️ No auth env vars; running anonymous")
         return None
 
     # ------------------------------------------------------------------
@@ -497,12 +555,12 @@ class GenericAgentHost:
             parent_context = propagate.extract(req.headers)
 
             with tracer.start_as_current_span(
-                "POST /api/messages",
+                "POST /activity/messages",
                 context=parent_context,
                 kind=SpanKind.SERVER,
                 attributes={
                     "http.request.method": req.method,
-                    "http.route": "/api/messages",
+                    "http.route": "/activity/messages",
                     "url.scheme": req.scheme,
                     "server.address": req.host,
                 },
@@ -514,7 +572,7 @@ class GenericAgentHost:
                     except UnicodeDecodeError:
                         body_repr = repr(body_bytes)
                     logger.info(
-                        "📥 /api/messages request | method=%s | content-type=%s | size=%d bytes | body=%s",
+                        "📥 /activity/messages request | method=%s | content-type=%s | size=%d bytes | body=%s",
                         req.method,
                         req.headers.get("Content-Type", ""),
                         len(body_bytes),
@@ -578,8 +636,8 @@ class GenericAgentHost:
         middlewares.append(anonymous_claims)
         app = Application(middlewares=middlewares)
 
-        app.router.add_post("/api/messages", entry_point)
-        app.router.add_get("/api/messages", lambda _: Response(status=200))
+        app.router.add_post("/activity/messages", entry_point)
+        app.router.add_get("/activity/messages", lambda _: Response(status=200))
         app.router.add_get("/", root)
         app.router.add_get("/liveness", root)
         app.router.add_get("/readiness", root)
@@ -606,7 +664,7 @@ class GenericAgentHost:
         print("=" * 80)
         print(f"🔒 Auth: {'Enabled' if auth_configuration else 'Anonymous'}")
         print(f"🚀 Server: {host_addr}:{port}")
-        print(f"📚 Endpoint: http://{host_addr}:{port}/api/messages")
+        print(f"📚 Endpoint: http://{host_addr}:{port}/activity/messages")
         print(f"❤️  Health: http://{host_addr}:{port}/api/health\n")
 
         try:

@@ -15,7 +15,7 @@ Pick the tool that matches your workflow — both deploy the same sample image t
 
 #### Deploy with the Azure Developer CLI (`azd`)
 
-> **Prerequisites:** Install the Azure Developer CLI with the Foundry AI extension. See [Set up azd for hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd) if you haven't already.
+> **Prerequisites:** Install Azure Developer CLI (`azd`) 1.27.1 or later with the Foundry AI extension. For service environment variables in the `env:` map, follow the setup guidance for `azure.ai.agents` 1.0.0-beta.9 or later, even when a manifest declares an older minimum. See [Set up azd for hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd) if you haven't already.
 
 ```bash
 mkdir my-agent && cd my-agent
@@ -39,6 +39,30 @@ See the [VS Code quickstart](https://learn.microsoft.com/en-us/azure/foundry/age
 Read on to pick the right sample for your scenario, or jump to the [learning path](#learning-path) for a guided walkthrough.
 
 ---
+
+## Python startup configuration
+
+The Python hosted-agent services in these samples configure
+`PYTHONNOUSERSITE: "1"` in their `azure.yaml` service `env` maps. The Python
+Dockerfiles also set `ENV PYTHONNOUSERSITE=1` for container runs that bypass
+the manifest. This is sample/customer configuration, not an environment
+variable automatically injected by the hosting platform.
+
+`PYTHONNOUSERSITE=1` disables Python's user-site package loading. Install
+dependencies in the sample's virtual environment, container image, or system
+environment rather than with `pip --user`. Existing `uv sync --frozen`
+installations use a project virtual environment and remain compatible.
+This is a scoped Python startup measure, not a general execution-prevention
+or sandbox boundary.
+
+Keep this setting in deployment environment configuration and Python
+Dockerfiles rather than adding it to individual run commands. Loading it
+from `.env` inside Python or assigning `os.environ` in `main.py` is too late
+to affect interpreter startup.
+
+For custom SDK or REST deployments, include `"PYTHONNOUSERSITE": "1"` in the
+hosted agent definition's `environment_variables` map. For an image that does
+not already set it, pass `-e PYTHONNOUSERSITE=1` to `docker run`.
 
 ## Two protocols: Responses and Invocations
 
@@ -136,6 +160,7 @@ Full control over the HTTP request/response cycle. You define the payload schema
 | Sample                                                                 | What it shows                                                                           |
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | **[Basic Invocations Agent](./agent-framework/invocations/01-basic/)** | Minimal invocations agent — shows the invocations handler pattern with Agent Framework. |
+| **[Content safety guardrail (Invocations)](./agent-framework/invocations/02-content-safety-guardrail/)** | Attach a content safety guardrail to an invocations agent, declaring where prompt and response text live with `invocationsModeration`. |
 
 ---
 
@@ -155,6 +180,7 @@ See [`langgraph/README.md`](langgraph/) for the full list and the local-run guid
 | **[Files](langgraph/responses/06-files/)**                              | LangGraph agent with local filesystem tools and a Foundry-Toolbox `code_interpreter` for session-uploaded files.                       |
 | **[Human-in-the-Loop](langgraph/responses/07-human-in-the-loop/)**      | `StateGraph` that drafts a proposal and pauses for approval via `langgraph.types.interrupt`, serialized as `mcp_approval_request` + `function_call`. |
 | **[Observability](langgraph/responses/08-observability/)**              | GenAI OpenTelemetry tracing enabled with `enable_auto_tracing()` — spans, metrics, and logs flow to Application Insights.              |
+| **[Middleware](langgraph/responses/14-middleware/)** | Standard LangChain `create_agent` with built-in human-review middleware and a custom `@before_model` hook, hosted on Foundry. |
 
 ### Invocations protocol
 
@@ -205,7 +231,7 @@ Already built an agent with CrewAI or your own code? The protocol SDKs (`azure-a
 
 ## Python dependencies
 
-Each new or dependency-updated Python Hosted Agent runtime commits a fully resolved `requirements.txt` as its portable consumer artifact. Consumers can install it with standard pip, while sample authors remain free to use pip-tools, uv, Poetry, PDM, Pipenv, or another resolver to generate the file.
+New Python Hosted Agent runtimes use `pyproject.toml` with `uv.lock` by default. A fully resolved `requirements.txt` remains accepted as a backward-compatible fallback. The selected artifact must capture the complete dependency graph; CI validates uv locks with a pinned uv version and a frozen production export.
 
 See the [Python Hosted Agent dependency policy](DEPENDENCY_POLICY.md) for pinning rules, authoring-tool examples, validation commands, ratchet behavior, and exceptions.
 
@@ -294,7 +320,7 @@ Here is a hosted agent sample with Invocations protocol that is compatible with 
 
 - **Azure subscription** with access to Microsoft Foundry
 - **One of the following deploy tools:**
-  - **Azure Developer CLI (`azd`)** — [install](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd), or
+  - **Azure Developer CLI (`azd`) 1.27.1 or later** — [install](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd), or
   - **Foundry Toolkit VS Code Extension** — [install](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=vscode)
 - **Python 3.12+**
 

@@ -18,7 +18,7 @@ A real-time voice agent hosted as a **Bring Your Own** WebSocket container using
 
 The `server.py` exposes a single `/invocations_ws` WebSocket endpoint that speaks the pipecat protobuf frame protocol. Audio (Int16 PCM @ 16 kHz mono) flows in, agent speech (PCM at the TTS sample rate) flows back, and RTVI control frames carry events such as `bot-started-speaking`, `turn-started`, and TTFA latency.
 
-The browser client lives in [`chat_client/`](chat_client/) — a small FastAPI portal that translates between the browser's simple binary/JSON WebSocket protocol and the upstream pipecat protobuf frames. It works against either a local `server.py` or the Foundry-hosted agent.
+The browser client lives in [`chat_client/`](src/pipecat-ws-server/chat_client/) — a small FastAPI portal that translates between the browser's simple binary/JSON WebSocket protocol and the upstream pipecat protobuf frames. It works against either a local `server.py` or the Foundry-hosted agent.
 
 ## Architecture
 
@@ -47,10 +47,11 @@ The browser client lives in [`chat_client/`](chat_client/) — a small FastAPI p
 
 ## Prerequisites
 
-1. **Python 3.10 or later** — `python --version`
-2. **Azure CLI** — installed and authenticated: `az login`
-3. **Azure Developer CLI (`azd`)** (only needed for the deploy step) — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.25 or later) and the unified Foundry CLI extension: `azd ext install microsoft.foundry`
-4. **Azure resources**:
+1. **Python 3.12 or later** — `python --version`
+2. **uv 0.11.7 or later** — [Install uv](https://docs.astral.sh/uv/getting-started/installation/)
+3. **Azure CLI** — installed and authenticated: `az login`
+4. **Azure Developer CLI (`azd`)** (only needed for the deploy step) — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.25 or later) and the unified Foundry CLI extension: `azd ext install microsoft.foundry`
+5. **Azure resources**:
    - Azure Speech (any region) — for STT and TTS
    - Azure OpenAI deployment (e.g. `gpt-4o-mini`) — for the LLM agents
 
@@ -65,15 +66,16 @@ The browser client lives in [`chat_client/`](chat_client/) — a small FastAPI p
 | `AZURE_FOUNDRY_API_KEY` | Yes | Key for the Azure OpenAI / Foundry endpoint. |
 | `AZURE_OPENAI_ENDPOINT` | Yes | Azure OpenAI endpoint (e.g. `https://your-aoai.openai.azure.com`). |
 | `AZURE_LLM_MODEL` | Yes | Model deployment name (e.g. `gpt-4o-mini`). |
+| `PORT` | No | Server port. Defaults to `8088`; `azd ai agent run --port` sets this automatically. |
 
 ```bash
 cp .env.example .env
 # Edit .env with your values
 ```
 
-### Client ([`chat_client/.env`](chat_client/.env.example))
+### Client ([`chat_client/.env`](src/pipecat-ws-server/chat_client/.env.example))
 
-The shared portal under [`chat_client/`](chat_client/) handles the
+The shared portal under [`chat_client/`](src/pipecat-ws-server/chat_client/) handles the
 browser. Configure it to point at either a local `server.py` or the
 Foundry-hosted agent.
 
@@ -105,7 +107,7 @@ PIPECAT_WEBSOCKET_AGENT_NAME=pipecat-ws-server
 ```
 
 ```bash
-cd chat_client
+cd samples/python/hosted-agents/bring-your-own/invocations_ws/pipecat-ws-server/src/pipecat-ws-server/chat_client
 cp .env.example .env
 # Edit .env with your values
 ```
@@ -120,16 +122,17 @@ You can run the server and client in two terminals.
 
 ```bash
 cd samples/python/hosted-agents/bring-your-own/invocations_ws/pipecat-ws-server
-
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install uv
+cd src/pipecat-ws-server
+uv sync --frozen
 
 # Make sure .env is filled in (see "Server" table above)
-python server.py
+uv run --no-sync python server.py
 ```
 
-The server logs `Uvicorn running on http://0.0.0.0:8088` and exposes:
+The server defaults to `http://0.0.0.0:8088`. Set `PORT` (or use
+`azd ai agent run --port <port>`) to select another port, and update the client's
+`PIPECAT_WEBSOCKET_LOCAL_URL` accordingly. The server exposes:
 
 - `GET /health`, `/readiness`, `/liveness` — health probes
 - `WS  /invocations_ws` — the pipecat protobuf WebSocket endpoint
@@ -142,10 +145,9 @@ The server logs `Uvicorn running on http://0.0.0.0:8088` and exposes:
 In a second terminal:
 
 ```bash
-cd samples/python/hosted-agents/bring-your-own/invocations_ws/pipecat-ws-server/chat_client
-
-python -m venv ../.venv          # (or reuse the server's venv)
-source ../.venv/bin/activate
+cd samples/python/hosted-agents/bring-your-own/invocations_ws/pipecat-ws-server/src/pipecat-ws-server/chat_client
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
 # Local mode — point at the server you just started
@@ -246,7 +248,7 @@ Once the agent is `Running` in Foundry, point the shared web portal at it.
    https://{account}.services.ai.azure.com/api/projects/{project}
    ```
 
-2. Update `chat_client/.env`:
+2. Update `src/pipecat-ws-server/chat_client/.env`:
 
    ```bash
    # Comment out the local-mode override
@@ -262,7 +264,8 @@ Once the agent is `Running` in Foundry, point the shared web portal at it.
 4. Restart the portal and reload <http://localhost:9527>:
 
    ```bash
-   cd chat_client && python web_portal.py
+   cd samples/python/hosted-agents/bring-your-own/invocations_ws/pipecat-ws-server/src/pipecat-ws-server/chat_client
+   python web_portal.py
    ```
 
 The portal log shows the upstream `agent_session_id` it generated; that ID is also useful when fetching server logs:
@@ -270,4 +273,3 @@ The portal log shows the upstream `agent_session_id` it generated; that ID is al
 ```bash
 azd ai agent monitor pipecat-ws-server --session-id <session-id> --follow
 ```
-

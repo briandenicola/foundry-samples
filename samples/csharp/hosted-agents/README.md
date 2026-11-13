@@ -15,7 +15,7 @@ Pick the tool that matches your workflow — both deploy the same sample image t
 
 #### Deploy with the Azure Developer CLI (`azd`)
 
-> **Prerequisites:** Install the Azure Developer CLI with the Foundry AI extension. See [Set up azd for hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd) if you haven't already.
+> **Prerequisites:** Install Azure Developer CLI (`azd`) 1.27.1 or later with the Foundry AI extension. Manifests that set service environment variables use the `env:` map and require `azure.ai.agents` 1.0.0-beta.9 or later; their `requiredVersions` blocks enforce these minimums. See [Set up azd for hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd) if you haven't already.
 
 ```bash
 mkdir my-agent && cd my-agent
@@ -174,6 +174,16 @@ Already built an agent with your own .NET code? The protocol SDKs (`Azure.AI.Age
 | **[Notetaking Agent](bring-your-own/invocations/notetaking-agent/)** | Note-taking agent with the Invocations protocol. |
 | **[Human-in-the-Loop](bring-your-own/invocations/human-in-the-loop/)** | Long-running agent that pauses for human approval before continuing. |
 
+### Activity protocol
+
+These samples use `Azure.AI.AgentServer.Activity` to host native Microsoft 365
+Agents SDK handlers, with direct Teams/M365 channel delivery (no Responses bridge).
+
+| Sample | What it shows |
+|--------|--------------|
+| **[Echo](bring-your-own/activity/echo/)** | Minimal Activity host, message replies, and member welcome messages. No model required. |
+| **[GitHub Copilot](bring-your-own/activity/github-copilot/)** | Copilot SDK with a Foundry model, streaming, persistent tasks, Adaptive Cards, and shared/generated files. |
+
 **Which approach?** Use the protocol SDKs (`Azure.AI.AgentServer.Responses` / `Azure.AI.AgentServer.Invocations`) — they work with any framework and keep you aligned with the platform contract. The **Core adapter** (`Azure.AI.AgentServer.Core`) is available when you need lower-level control without protocol abstractions. The Custom HTTP sample exists as a reference for what the contract looks like under the hood with no SDK at all.
 
 **What's different from Agent Framework samples:** BYO samples handle their own session state and tool wiring. The protocol SDKs give you the HTTP plumbing, but the tradeoff vs. full Agent Framework is that you manage orchestration, tools, and memory in your own code. The Dockerfile, azure.yaml, and `azd up` deployment are the same.
@@ -318,7 +328,7 @@ Python samples follow the same layout with `main.py`, `requirements.txt`, and a 
 
 - **Azure subscription** with access to Microsoft Foundry
 - **One of the following deploy tools:**
-  - **Azure Developer CLI (`azd`)** — [install](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd), or
+  - **Azure Developer CLI (`azd`) 1.27.1 or later** — [install](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd), or
   - **Foundry Toolkit VS Code Extension** — [install](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=vscode)
 - **.NET 10** (or **Python 3.12+** for Python samples)
 

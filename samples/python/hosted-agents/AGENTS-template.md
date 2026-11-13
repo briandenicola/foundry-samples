@@ -31,7 +31,7 @@ Keep the bullet that matches this sample's `azure.yaml`:
   environment variables, and deployment mode
 - `src/{{agent-source-directory}}/{{entry-point}}` - agent implementation and server
   entry point
-- `src/{{agent-source-directory}}/requirements.txt` - portable, fully resolved Python runtime dependencies
+- `src/{{agent-source-directory}}/pyproject.toml` and `uv.lock` - default, fully resolved Python runtime dependencies; use `requirements.txt` only as the backward-compatible fallback
 - `src/{{agent-source-directory}}/Dockerfile` - container definition; keep this bullet
   only for container-mode samples
 - `README.md` - prerequisites and supported local run, test, and deployment paths
@@ -44,12 +44,25 @@ task files generated when the Foundry Toolkit scaffolds a local workspace.
 Follow the shared Python Hosted Agent dependency policy at
 `samples/python/hosted-agents/DEPENDENCY_POLICY.md`.
 
-`requirements.txt` is the portable consumer artifact and must pin the complete
-direct and transitive runtime graph. You may use any dependency-management tool,
-but export and commit its pip-compatible `requirements.txt`. Regenerate the
-artifact whenever `pyproject.toml`, a native lockfile, or another dependency input
-changes. Run the policy checker, including its `--resolve` closure check when
-network access is available, before completing dependency changes.
+Use `pyproject.toml` and `uv.lock` by default. A fully resolved
+`requirements.txt` remains accepted as a backward-compatible fallback. The
+selected artifact must pin the complete direct and transitive runtime graph; if
+both forms exist, the uv pair is authoritative. Update the selected artifact
+whenever a dependency input changes. Run the policy checker, including its
+`--resolve` closure check when network access is available, before completing
+dependency changes.
+
+## Runtime logging
+
+Use the standard `logging` module for diagnostics emitted by the running hosted
+agent. Prefer `logger.info()`, `logger.warning()`, and `logger.exception()` over
+`print()` when output must be observable while the long-running process remains
+alive; Python stdout may remain buffered in hosted containers.
+
+Use `print()` only when stdout is intentionally part of a CLI, provisioning
+script, local test utility, or tool-result contract. If stdout is required from a
+long-running process, flush it explicitly. E2E log assertions must target a
+deliberate sample-owned log event, not mutable framework or dependency wording.
 
 ## Development workflow
 

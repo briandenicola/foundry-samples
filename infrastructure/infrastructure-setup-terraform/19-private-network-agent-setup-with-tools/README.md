@@ -39,9 +39,7 @@ Use this template when you need:
 
 ### IP Range Support
 
-> Private Class A subnet support (10.x.x.x) is GA and available in: **Australia East, Brazil South, Canada East, East US, East US 2, France Central, Germany West Central, Italy North, Japan East, South Africa North, South Central US, South India, Spain Central, Sweden Central, UAE North, UK South, West Europe, West US, West US 3.**
->
-> Private Class B (172.16.x.x) and C (192.168.x.x) subnet support is GA in all regions supported by Microsoft Foundry Agent Service.
+> Use only supported RFC 1918 or RFC 6598 address space. For RFC 1918, use addresses within `10.0.0.0/8`, `172.16.0.0/12`, or `192.168.0.0/16`. For RFC 6598 (CGNAT), use addresses within `100.64.0.0/10`, excluding `100.100.0.0/17`, `100.100.192.0/19`, and `100.100.224.0/19`. Public IP ranges aren't supported.
 
 ---
 
@@ -150,13 +148,12 @@ Use this template when you need:
 
 3. Ensure the VNet address space does not overlap with:
    - Existing networks in your Azure environment
-   - Reserved IP ranges: `169.254.0.0/16`, `172.30.0.0/16`, `172.31.0.0/16`, `192.0.2.0/24`, `0.0.0.0/8`, `127.0.0.0/8`, `100.100.0.0/17`, `100.100.192.0/19`, `100.100.224.0/19`, `100.64.0.0/11`
+   - Reserved IP ranges: `169.254.0.0/16`, `172.30.0.0/16`, `172.31.0.0/16`, `192.0.2.0/24`, `0.0.0.0/8`, `127.0.0.0/8`, `100.100.0.0/17`, `100.100.192.0/19`, `100.100.224.0/19`
    - Peered VNets or on-premises address spaces
 
 > **Notes:**
 > - If you do not provide an existing VNet, the template creates a new one with the default address spaces above.
 > - The agent subnet must be exclusively delegated to `Microsoft.App/environments` and cannot be used by any other Azure resources.
-> - For Class A IP ranges (10.x.x.x), only the [regions listed above](#ip-range-support) are supported.
 
 ---
 
@@ -293,6 +290,11 @@ The template creates the following resources:
 | Connections (3) | `azapi_resource` | Cosmos DB, Storage, AI Search (AAD auth) |
 | RBAC Assignments (6) | `azapi_resource` | Phase A (before caphost) + Phase B (after caphost) |
 | Capability Hosts (2) | `azapi_resource` | Account + Project |
+| Application Insights + Log Analytics | `azurerm_application_insights` | Public ingestion disabled, public query enabled |
+| Azure Monitor Private Link Scope (AMPLS) | `azurerm_monitor_private_link_scope` | Ingestion `PrivateOnly`, query `Open`; both resources scoped |
+| AMPLS Private Endpoint + DNS Zones (4) | `azurerm_private_endpoint` | `azuremonitor` group; monitor, oms, ods, agentsvc zones linked to VNet |
+| App Insights Connection | `azapi_resource` | Project-level `ApiKey` connection so agent traces are exported |
+| Monitoring Roles (2) | `azurerm_role_assignment` | Log Analytics Reader + Privileged Monitoring Data Reader on App Insights, project MI |
 | ACR (optional) | `azurerm_container_registry` | Premium SKU, PE + DNS zone, AcrPull role on project MI |
 | Account Purger | `terraform_data` | Purges soft-deleted account on destroy |
 
@@ -310,6 +312,8 @@ This template uses **System Assigned Managed Identity** with the following role 
 | Cosmos DB Operator | Cosmos DB Account | A |
 | Cosmos DB SQL Built-in Data Contributor | Cosmos DB Account | B (after caphost) |
 | Storage Blob Data Owner (with ABAC condition) | Storage Account | B |
+| Log Analytics Reader | Application Insights | After project creation |
+| Privileged Monitoring Data Reader | Application Insights | After project creation |
 
 ### BYO Resources
 
@@ -364,7 +368,8 @@ existing_dns_zones_resource_group = "my-dns-rg"
 - **VNet**: All 3 subnet IDs must be provided together. Agent and MCP subnets must be delegated to `Microsoft.App/environments`.
 - **Agent subnet**: Must not have an existing Service Association Link (SAL) from another Foundry account. One account per agent subnet.
 - **Backend services**: Must have public access disabled.
-- **DNS zones**: All 6 private DNS zones must exist in the specified resource group and be linked to the VNet.
+- **DNS zones**: All 6 private DNS zones must exist in the specified resource group and be linked to the VNet. The 4 Azure Monitor zones (`privatelink.monitor.azure.com`, `privatelink.oms.opinsights.azure.com`, `privatelink.ods.opinsights.azure.com`, `privatelink.agentsvc.azure-automation.net`) must exist there too and be linked to the VNet.
+- **Azure Monitor private link**: A VNet can use only one Azure Monitor Private Link Scope. If your VNet already has an `azuremonitor` private endpoint, the new scope's DNS records would conflict with it; use a different VNet or reuse your existing scope instead. Because ingestion is `PrivateOnly`, other Azure Monitor resources sharing the same DNS zones can only be reached if they are also scoped into this AMPLS.
 - **DNS zone cross-subscription**: Set `existing_dns_zones_subscription_id` if the DNS zones are in a different subscription. The deployment identity needs `Private DNS Zone Contributor` on each referenced zone.
 
 > **Cosmos DB Connection Note**: The Cosmos DB connection uses `authType: AAD` and includes the `ResourceId` in metadata. This is the only supported authentication type for the Cosmos DB connection used by the Agent Service.
@@ -429,7 +434,7 @@ If you need to manually clean up:
 
 1. The delegated agent subnet must be exclusively used by a single Foundry account. It cannot be shared across accounts. A **Service Association Link (SAL)** is placed on the subnet during account creation. The SAL has `allowDelete: false` and may take up to 30 minutes to be released after the account is deleted and purged.
 2. The Foundry resource and the VNet must be in the same Azure region. BYO backend resources (Storage, Cosmos DB, AI Search) may be in different regions.
-3. For the VNet IP range, you may use any Private Class A, B, or C range. Class A (10.x.x.x) is only supported in [specific regions](#ip-range-support). Do not use ranges that overlap with the reserved ranges listed in [Networking Requirements](#networking-requirements).
+3. Use only supported RFC 1918 or RFC 6598 address space. For RFC 1918, use addresses within `10.0.0.0/8`, `172.16.0.0/12`, or `192.168.0.0/16`. For RFC 6598 (CGNAT), use addresses within `100.64.0.0/10`, excluding `100.100.0.0/17`, `100.100.192.0/19`, and `100.100.224.0/19`. Public IP ranges aren't supported.
 4. All projects within the same Foundry account share model deployments. Per-project model isolation is not supported.
 5. Cosmos DB is deployed as single-region. Multi-region replication must be configured manually post-deployment.
 6. When using BYO resources, private endpoints are still created by this template. A random suffix is added to avoid naming collisions with existing private endpoints.
@@ -444,6 +449,7 @@ If you need to manually clean up:
 └── code/
     ├── main.tf            # All resources (networking, compute, RBAC, connections)
     ├── variables.tf       # Input variable definitions
+    ├── monitor.tf         # Application Insights, AMPLS, private endpoint, connection, monitor roles
     ├── locals.tf          # Computed locals (BYO flags, unified references)
     ├── data.tf            # Data sources (client config, existing resources)
     ├── outputs.tf         # Output values

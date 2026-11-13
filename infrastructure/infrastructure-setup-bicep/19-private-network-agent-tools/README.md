@@ -37,6 +37,7 @@ Use this template when you need:
 - **BYO VNet control** — You manage your own virtual network, subnets, and network security groups
 - **Standard agent setup with BYO resources** — Customer-managed Storage, Cosmos DB, and AI Search for data residency and compliance
 - **Tools behind VNet** — MCP servers, OpenAPI tools, Azure Functions, or A2A agents deployed on the private VNet
+- **Private CA readiness** — A network-secured Key Vault for public root/intermediate CA certificates used by private HTTPS tools
 - **System Assigned Managed Identity** — Simplified identity management with platform-managed credentials
 
 ### Template Decision Guide
@@ -72,7 +73,7 @@ Use the table below to choose the right infrastructure template for your scenari
 
 [![Deploy To Azure](https://raw.githubusercontent.com/Azure/azure-quickstart-templates/master/1-CONTRIBUTION-GUIDE/images/deploytoazure.svg?sanitize=true)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fazure-ai-foundry%2Ffoundry-samples%2Frefs%2Fheads%2Fmain%2Finfrastructure%2Finfrastructure-setup-bicep%2F19-private-network-agent-tools%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2Fazure-ai-foundry%2Ffoundry-samples%2Frefs%2Fheads%2Fmain%2Finfrastructure%2Finfrastructure-setup-bicep%2F19-private-network-agent-tools%2FcreateUiDefinition.json)
 
-> The "Deploy to Azure" button uses [`createUiDefinition.json`](./createUiDefinition.json) to render a guided wizard in the Azure Portal: real VNet/subnet pickers, resource pickers for AI Search / Cosmos / Storage, and per-field validation \u2014 instead of the default flat list of 27 text boxes.
+> The "Deploy to Azure" button uses [`createUiDefinition.json`](./createUiDefinition.json) to render a guided wizard in the Azure Portal with VNet/subnet pickers and resource pickers for AI Search, Cosmos DB, Storage, and Key Vault.
 
 
 ---
@@ -117,7 +118,7 @@ Use the table below to choose the right infrastructure template for your scenari
     - **Agent Subnet** (e.g., 192.168.0.0/24): Hosts Agent client for Agent workloads, delegated to Microsoft.App/environments. The recommended size should be /24 for this delegated subnet.
     - **Private endpoint Subnet** (e.g., 192.168.1.0/24): Hosts private endpoints
     - **MCP Subnet** (e.g., 192.168.2.0/24): Hosts MCP servers, OpenAPI tools, Azure Functions, and A2A agents on the VNet
-    - Ensure that the address spaces for the used VNET does not overlap with any existing networks in your Azure environment or reserved IP ranges like the following: 169.254.0.0/16,172.30.0.0/16,172.31.0.0/16,192.0.2.0/24,0.0.0.0/8,127.0.0.0/8,100.100.0.0/17,100.100.192.0/19,100.100.224.0/19,100.64.0.0/11.
+    - Ensure that the address spaces for the used VNET does not overlap with any existing networks in your Azure environment or reserved IP ranges like the following: 169.254.0.0/16,172.30.0.0/16,172.31.0.0/16,192.0.2.0/24,0.0.0.0/8,127.0.0.0/8,100.100.0.0/17,100.100.192.0/19,100.100.224.0/19.
     This includes all address space(s) you have in your VNET if you have more than one, and peered VNETs.
 
   > **Notes:**
@@ -129,7 +130,7 @@ Use the table below to choose the right infrastructure template for your scenari
 
 1. The delegated agent subnet must be exclusively used by a single Foundry account. It cannot be shared across accounts.
 2. The Foundry resource and the virtual network must be in the same Azure region. BYO resources (Storage, Cosmos DB, AI Search) may be in different regions.
-3. For the virtual network IP range, you may use any Private Class A, B or C IP range. Private Class A IP address ranges (10.x.x.x) are only supported in the following regions: **Australia East, Brazil South, Canada East, East US, East US 2, France Central, Germany West Central, Italy North, Japan East, South Africa North, South Central US, South India, Spain Central, Sweden Central, UAE North, UK South, West US, West US 3.** Use Class B (172.16.x.x) or C (192.168.x.x) ranges for other regions. You may not use any other IP range that overlaps to the list above or uses public IP ranges. 
+3. Use only supported RFC 1918 or RFC 6598 address space. For RFC 1918, use addresses within `10.0.0.0/8`, `172.16.0.0/12`, or `192.168.0.0/16`. For RFC 6598 (CGNAT), use addresses within `100.64.0.0/10`, excluding `100.100.0.0/17`, `100.100.192.0/19`, and `100.100.224.0/19`. Public IP ranges aren't supported.
 4. There is no upgrade path from BYO VNet (this template) to Managed Virtual Network (template 18). A Foundry resource redeployment is required.
 5. All projects within the same Foundry account share model deployments. Per-project model isolation is not supported.
 6. Cosmos DB is deployed as single-region. Multi-region replication must be configured manually post-deployment.
@@ -179,6 +180,7 @@ Note: If not provided, the following resources will be created automatically for
 - Azure Cosmos DB for NoSQL
 - Azure AI Search
 - Azure Storage
+- Azure Key Vault with RBAC, a private endpoint, and private DNS
 - Azure Container Registry (Premium SKU) with private endpoint *(when `enableContainerRegistry=true`)*
 
 #### Parameters
@@ -228,7 +230,10 @@ Note: If not provided, the following resources will be created automatically for
 | `existingAzureStorageAccountResourceId` | ARM Resource ID of existing Storage account | `''` (creates new) | No |
 | `existingAzureCosmosDBAccountResourceId` | ARM Resource ID of existing Cosmos DB | `''` (creates new) | No |
 | `existingFabricWorkspaceResourceId` | ARM Resource ID of existing Fabric workspace | `''` | No |
-| `existingDnsZones` | Map of `'<zoneFqdn>': { subscriptionId, resourceGroup }` — see [Use existing Private DNS zones](#5-use-existing-private-dns-zones-cross-rg--cross-subscription) | All `{ subscriptionId: '', resourceGroup: '' }` (creates new) | No |
+| `enableKeyVault` | Creates or connects a Key Vault for private CA certificate trust, including its private endpoint, DNS, and Foundry account read access. | `true` | No |
+| `keyVaultName` | Optional name for a newly created Key Vault. Ignored when `existingKeyVaultResourceId` is set. | `''` (generated) | No |
+| `existingKeyVaultResourceId` | ARM Resource ID of an existing RBAC-enabled Key Vault. | `''` (creates new) | No |
+| `existingDnsZones` | Map of `'<zoneFqdn>': { subscriptionId, resourceGroup }` — see [Use existing Private DNS zones](#6-use-existing-private-dns-zones-cross-rg--cross-subscription) | All `{ subscriptionId: '', resourceGroup: '' }` (creates new) | No |
 | `enableContainerRegistry` | When `true`, creates an Azure Container Registry (Premium SKU) with a private endpoint in the PE subnet, a `privatelink.azurecr.io` DNS zone, and an AcrPull role assignment for the project managed identity. | `true` | No |
 | `developerIpCidr` | Developer IP CIDR to allowlist for ACR push access (e.g., `203.0.113.0/26`). When set, enables public network access with a deny-all default + an IP allowlist rule so developers can push images. When empty, public access remains fully disabled. | `''` | No |
 
@@ -285,7 +290,48 @@ To use an existing Azure AI Search resource, set `existingAiSearchResourceId` to
 To use an existing Azure Storage account, set `existingAzureStorageAccountResourceId` to the full ARM ID of the target storage account.
 - `param existingAzureStorageAccountResourceId = '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Storage/storageAccounts/{storageAccountName}'`
 
-5. **Use existing Private DNS zones (cross-RG / cross-subscription)**
+5. **Use Key Vault for private CA trust**
+
+Key Vault is deployed by default with Azure RBAC authorization, firewall default-deny, Azure-services bypass, a private endpoint in the PE subnet, and `privatelink.vaultcore.azure.net` DNS. The Foundry account system identity receives the **Key Vault Secrets User** role. To use an existing vault instead, set `existingKeyVaultResourceId`; the vault must use Azure RBAC authorization. The template does not modify an existing vault's firewall.
+
+**Restricted Key Vaults are supported.** Enable **Allow trusted Microsoft services to bypass this firewall** (`networkAcls.bypass: AzureServices`) and grant the account identity permission to read secrets. Private endpoint connectivity alone is not sufficient for the service's CA retrieval path. The default vault keeps `publicNetworkAccess: Enabled` with `defaultAction: Deny`, no public IP rules, and the trusted-services bypass; this is not unrestricted public access. Upload secrets from a machine with authorized vault connectivity, such as a jump host using the private endpoint.
+
+The service uses the account's primary attached user-assigned managed identity when configured, otherwise its system-assigned identity. This template uses the system-assigned identity. A project's identity is not used to retrieve the CA secrets.
+
+Certificate onboarding remains separate because the CA secret and its pinned version do not exist during the initial deployment:
+
+1. Store the required **public root or intermediate CA certificates** as PEM-formatted Key Vault secrets. One secret can contain multiple CA certificates. Do not upload private keys or use Key Vault certificate objects.
+2. Register the vault ID and exact secret versions in account-level `properties.trustedCertificateSources`, using `type: "AzureKeyVault"`, `resourceId`, and `certificateBundleReferences` entries with `secretName` and `secretVersion`.
+3. Wait for the account update's long-running operation (LRO) to report `Succeeded`, then verify the stored references and test a managed-tool HTTPS call from your agent.
+
+```json
+{
+  "properties": {
+    "trustedCertificateSources": [{
+      "type": "AzureKeyVault",
+      "resourceId": "<key-vault-resource-id>",
+      "certificateBundleReferences": [{
+        "secretName": "private-ca-bundle",
+        "secretVersion": "<exact-secret-version>"
+      }]
+    }]
+  }
+}
+```
+
+The account supports one vault source, up to 25 secret references, and up to 100 CA certificates across those secrets. An update replaces the entire array: preserve unrelated references. An empty array (`trustedCertificateSources: []`) removes all customer CA references. The registration script below merges references from the same vault, replaces the pinned version for explicitly named secrets, and refuses a different vault or an update exceeding 25 references. The service validates certificate contents and the total certificate count.
+
+Account CA trust is **public preview in all Azure public cloud regions**, with no subscription allowlisting required for this feature. This does not change Hosted Agent preview access requirements or other networking, model availability, and quota requirements.
+
+After the account update succeeds, trust propagates **automatically** to project capability hosts. Existing Hosted Agent sandboxes or snapshots can retain older trust for direct HTTPS: use a newly provisioned sandbox after propagation. Application runtimes with their own CA stores may need application-level configuration.
+
+Trust is based on the issuing CA chain, not the MCP or API hostname. A leaf certificate renewal under an already trusted CA needs no trust change; repeat onboarding only for a new CA or a new pinned secret version. Key Vault supplies the CA material when the runtime is configured and is not queried on every tool request.
+
+Use [Set-PrivateCaTrust.ps1](scripts/private-ca-trust/README.md#register-or-rotate-ca-trust) for onboarding and rotation. It preserves unrelated references, monitors the LRO (including `Updating`), and verifies read-back. The API version defaults to `2026-07-15-preview`; use a different version only when explicitly supported for your environment. Uploading a new secret version alone does not rotate trust: register its exact version. Leaf renewal under the same CA chain does not require a trust change.
+
+For LRO failures, inspect the returned error and fix the cause. A partial failure can leave the account on the new configuration while some projects retain the old trust. An identical resubmission can be a no-op; change the configuration or pinned version, or contact support. A local monitoring timeout does not cancel the server update: inspect the saved operation URL before resubmitting.
+
+6. **Use existing Private DNS zones (cross-RG / cross-subscription)**
 
 The `existingDnsZones` parameter controls, **per zone**, whether the template creates a new private DNS zone in this deployment’s resource group or references an existing one (optionally in another resource group and/or subscription).
 
@@ -308,6 +354,9 @@ param existingDnsZones = {
 
   // (c) Reference an existing zone in another RG and ANOTHER subscription
   'privatelink.search.windows.net':          { subscriptionId: '11111111-2222-3333-4444-555555555555', resourceGroup: 'hub-dns-rg' }
+
+  // Key Vault private endpoint DNS can also use a shared zone
+  'privatelink.vaultcore.azure.net':         { subscriptionId: '', resourceGroup: 'shared-dns-rg' }
 }
 ```
 
@@ -357,7 +406,7 @@ az deployment group show \
   --name "main" \
   --query "properties.provisioningState"
 
-# List private endpoints (should see AI Search, Storage, Cosmos DB)
+# List private endpoints (should see Foundry, AI Search, Storage, Cosmos DB, and Key Vault)
 az network private-endpoint list \
   --resource-group "rg-hybrid-agent-test" \
   --output table
@@ -547,6 +596,7 @@ Private endpoints ensure secure, internal-only connectivity. Private endpoints a
 - Azure AI Search
 - Azure Storage
 - Azure Cosmos DB
+- Azure Key Vault
 - Azure Monitor Private Link Scope (AMPLS) — enables telemetry export from hosted agents
 
 **Private DNS Zones**
@@ -556,6 +606,7 @@ Private endpoints ensure secure, internal-only connectivity. Private endpoints a
 | **Azure AI Search**        | searchService| `privatelink.search.windows.net` | `search.windows.net` |
 | **Azure Cosmos DB**        | Sql          | `privatelink.documents.azure.com` | `documents.azure.com` |
 | **Azure Storage**          | blob         | `privatelink.blob.core.windows.net` | `blob.core.windows.net` |
+| **Azure Key Vault**        | vault        | `privatelink.vaultcore.azure.net` | `vault.azure.net` |
 | **Azure Monitor (AMPLS)**  | azuremonitor | `privatelink.monitor.azure.com`<br>`privatelink.oms.opinsights.azure.com`<br>`privatelink.ods.opinsights.azure.com`<br>`privatelink.agentsvc.azure-automation.net` | `monitor.azure.com`<br>`oms.opinsights.azure.com`<br>`ods.opinsights.azure.com`<br>`agentsvc.azure-automation.net` |
 
 ### Authentication & Authorization
@@ -586,6 +637,8 @@ Private endpoints ensure secure, internal-only connectivity. Private endpoints a
       - Cosmos DB for NoSQL container: `<${projectWorkspaceId}>-thread-message-store`
       - Cosmos DB for NoSQL container: `<${projectWorkspaceId}>-system-thread-message-store`
       - Cosmos DB for NoSQL container: `<${projectWorkspaceId}>-agent-entity-store`
+  - **Azure Key Vault**
+    - Key Vault Secrets User (`4633458b-17de-408a-b874-0445c86b69e6`) for the Foundry account system identity
 
 ---
 

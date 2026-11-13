@@ -1,8 +1,9 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
 
 requiredVersions:
+  azd: '>=1.27.1'
   extensions:
-    azure.ai.agents: '>=1.0.0-beta.4'
+    azure.ai.agents: '>=1.0.0-beta.9'
 name: toolbox-langgraph-user-identity
 services:
   ai-project:
@@ -39,8 +40,7 @@ services:
     category: RemoteTool
     target: https://api.githubcopilot.com/mcp
     authType: OAuth2
-    credentials:
-      type: OAuth2
+    connectorName: foundrygithubmcp
   langgraph-toolbox-user-identity-tools:
     host: azure.ai.toolbox
     uses:
@@ -90,11 +90,10 @@ services:
     protocols:
       - protocol: responses
         version: 2.0.0
-    environmentVariables:
-      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
-        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
-      - name: TOOLBOX_NAME
-        value: langgraph-toolbox-user-identity-tools
+    env:
+      PYTHONNOUSERSITE: "1"
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      TOOLBOX_NAME: langgraph-toolbox-user-identity-tools
     container:
       resources:
         cpu: '0.5'
